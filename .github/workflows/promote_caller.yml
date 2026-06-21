@@ -1,0 +1,21 @@
+# Drop this file into EACH caller repo at:
+#   .github/workflows/promote.yml
+#
+# It is identical for every repo — all the logic lives in the central
+# reusable workflow. A reusable workflow cannot listen to "push" itself,
+# so this thin caller provides the trigger and hands off to the central one.
+
+name: Promote Release
+
+on:
+  push:
+    branches:
+      - "release_*"   # any numbered release branch in this repo
+
+jobs:
+  promote:
+    # Pin to a tag (e.g. @v1) once the central repo cuts a release.
+    uses: ShaikhWaleed-1994/shared_pr_workflow/.github/workflows/promote-reusable.yml@main
+    # secrets: inherit  # only needed if the central workflow later requires a custom token
+    # with:
+    #   final_branch: master   # override if this repo promotes into something other than master
