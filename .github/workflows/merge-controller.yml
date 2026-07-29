@@ -1,0 +1,76 @@
+name: Block stale release branch merges
+ 
+# Enforces: if release_x.x.xxx_<CUSTOMER>_D<N> is opened as a PR into master,
+# but a release_*_<CUSTOMER>_D<M> branch exists for the SAME customer with M > N,
+# the PR is blocked. Only the highest D-number per customer may merge to master.
+#
+# Customer codes are independent chains (e.g. MNT, HNB, FSV, ...) — a higher
+# D-number for one customer has no effect on another customer's branches.
+ 
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+ 
+permissions:
+  contents: read
+ 
+jobs:
+  check-latest-release-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify source branch is the newest release branch for its customer
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const headRef = context.payload.pull_request.head.ref;
+ 
+            // Only enforce this rule for branches following the release convention.
+            // Example: release_4.2.241_MNT_D200  ->  version=4.2.241, customer=MNT, dNumber=200
+            const pattern = /^release_(.+)_([A-Za-z0-9]+)_D(\d+)$/;
+            const headMatch = headRef.match(pattern);
+ 
+            if (!headMatch) {
+              core.info(`"${headRef}" does not match the release_<version>_<CUSTOMER>_D<N> convention. Skipping check.`);
+              return;
+            }
+ 
+            const headCustomer = headMatch[2].toUpperCase();
+            const headNumber = parseInt(headMatch[3], 10);
+            core.info(`Source branch "${headRef}" -> customer: ${headCustomer}, D-number: ${headNumber}`);
+ 
+            // List all branches in the repo and find every branch for the SAME customer.
+            const branches = await github.paginate(github.rest.repos.listBranches, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+ 
+            let highestNumber = headNumber;
+            let highestBranch = headRef;
+ 
+            for (const branch of branches) {
+              const match = branch.name.match(pattern);
+              if (!match) continue;
+ 
+              const customer = match[2].toUpperCase();
+              if (customer !== headCustomer) continue; // different customer chain, ignore
+ 
+              const num = parseInt(match[3], 10);
+              if (num > highestNumber) {
+                highestNumber = num;
+                highestBranch = branch.name;
+              }
+            }
+ 
+            if (highestNumber > headNumber) {
+              core.setFailed(
+                `Blocked: "${headRef}" (${headCustomer} D${headNumber}) is not the latest release branch for ${headCustomer}. ` +
+                `"${highestBranch}" (D${highestNumber}) exists and supersedes it. ` +
+                `Only the newest release branch per customer may merge to master. ` +
+                `Please merge "${highestBranch}" instead, or close this PR.`
+              );
+              return;
+            }
+ 
+            core.info(`"${headRef}" is the latest release branch for ${headCustomer} (D${highestNumber}). Check passed.`);
